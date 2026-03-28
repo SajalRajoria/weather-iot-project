@@ -1,72 +1,103 @@
 import streamlit as st
+import requests
 import pandas as pd
-import time
-import os
 import numpy as np
 from sklearn.linear_model import LinearRegression
+from streamlit_autorefresh import st_autorefresh
+from datetime import datetime
+
+# 🔁 Auto refresh every 10 sec
+st_autorefresh(interval=10000, key="refresh")
 
 # Page config
-st.set_page_config(page_title="Weather Dashboard", layout="wide")
+st.set_page_config(page_title="Advanced Weather App", layout="wide")
 
-st.title("🌦️ Smart IoT Weather Monitoring Dashboard")
+st.title("🌦️ Advanced Live Weather Dashboard")
 
-# Placeholder for auto refresh
-placeholder = st.empty()
+# 🔑 API KEY
+API_KEY = "e5dd5925b2e785093d814134ba52c691"
 
-while True:
-    with placeholder.container():
-        try:
-            # ✅ Check if file exists
-            if not os.path.exists("weather_data.csv"):
-                st.warning("⚠️ No data found. Run weather_iot.py first.")
-            else:
-                # Load data
-                data = pd.read_csv("weather_data.csv")
+# 🌍 City selector
+city = st.selectbox("📍 Select City", ["Palampur", "Shimla", "New Delhi", "Patiala"])
 
-                # Convert time column
-                data["Time"] = pd.to_datetime(data["Time"])
-                data.set_index("Time", inplace=True)
+# 🌐 API URL
+url = f"http://api.openweathermap.org/data/2.5/weather?q={city},IN&appid={API_KEY}&units=metric"
 
-                # 🟢 Latest values
-                latest_temp = data["Temperature"].iloc[-1]
-                latest_hum = data["Humidity"].iloc[-1]
+# Fetch data
+data = requests.get(url).json()
 
-                # 📊 Metrics
-                col1, col2 = st.columns(2)
-                col1.metric("🌡️ Temperature", f"{latest_temp:.2f} °C")
-                col2.metric("💧 Humidity", f"{latest_hum:.2f} %")
+# Session state for storing history
+if "weather_data" not in st.session_state:
+    st.session_state.weather_data = pd.DataFrame(columns=["Time", "Temperature", "Humidity"])
 
-                # 📈 Graphs
-                st.subheader("📈 Temperature Trend")
-                st.line_chart(data["Temperature"])
+if "main" in data:
+    temp = data["main"]["temp"]
+    humidity = data["main"]["humidity"]
 
-                st.subheader("💧 Humidity Trend")
-                st.line_chart(data["Humidity"])
+    # Add new data point
+    new_row = pd.DataFrame({
+        "Time": [datetime.now()],
+        "Temperature": [temp],
+        "Humidity": [humidity]
+    })
 
-                # 🤖 ML Prediction
-                st.subheader("🤖 Temperature Prediction")
+    st.session_state.weather_data = pd.concat(
+        [st.session_state.weather_data, new_row],
+        ignore_index=True
+    )
 
-                df = data.reset_index()
+    df = st.session_state.weather_data
 
-                # Convert time to numeric
-                df["Time_num"] = df["Time"].map(pd.Timestamp.timestamp)
+    # 📊 Metrics
+    col1, col2 = st.columns(2)
+    col1.metric("🌡️ Temperature", f"{temp:.2f} °C")
+    col2.metric("💧 Humidity", f"{humidity:.2f} %")
 
-                X = df["Time_num"].values.reshape(-1, 1)
-                y = df["Temperature"].values
+    st.divider()
 
-                if len(X) > 5:  # ensure enough data
-                    model = LinearRegression()
-                    model.fit(X, y)
+    # 📈 Graphs
+    st.subheader("📈 Temperature Trend")
+    st.line_chart(df.set_index("Time")["Temperature"])
 
-                    # Predict next 60 seconds
-                    future_time = np.array([[X[-1][0] + 60]])
-                    predicted_temp = model.predict(future_time)
+    st.subheader("💧 Humidity Trend")
+    st.line_chart(df.set_index("Time")["Humidity"])
 
-                    st.success(f"🔮 Predicted Temperature (Next Minute): {predicted_temp[0]:.2f} °C")
-                else:
-                    st.info("Collecting more data for prediction...")
+    st.divider()
 
-        except Exception as e:
-            st.error(f"❌ Error: {e}")
+    # 🤖 ML Prediction
+    st.subheader("🤖 AI Temperature Prediction")
 
-    time.sleep(5)  # refresh every 5 seconds
+    if len(df) > 5:
+        df["Time_num"] = df["Time"].map(pd.Timestamp.timestamp)
+
+        X = df["Time_num"].values.reshape(-1, 1)
+        y = df["Temperature"].values
+
+        model = LinearRegression()
+        model.fit(X, y)
+
+        future_time = np.array([[X[-1][0] + 60]])
+        predicted_temp = model.predict(future_time)
+
+        st.success(f"🔮 Predicted Temp (Next Minute): {predicted_temp[0]:.2f} °C")
+    else:
+        st.info("Collecting data for prediction...")
+
+    st.divider()
+
+    # 🚨 Alerts
+    st.subheader("🚨 Weather Alerts")
+
+    if temp > 35:
+        st.error("🔥 High Temperature Alert!")
+    elif temp < 5:
+        st.warning("❄️ Cold Weather Alert!")
+    else:
+        st.success("✅ Weather Normal")
+
+    # 📋 Data table
+    with st.expander("📋 Show Data"):
+        st.dataframe(df.tail(20))
+
+else:
+    st.error("❌ Error fetching weather data")
